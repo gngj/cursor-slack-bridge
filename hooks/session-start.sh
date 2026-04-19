@@ -1,4 +1,5 @@
 #!/bin/bash
+[ "${CURSOR_SLACK_DEBUG:-0}" = "1" ] && echo "$(date '+%Y-%m-%dT%H:%M:%S') session-start" >> /tmp/cursor-slack-bridge-hooks.log
 input=$(cat)
 conversation_id=$(echo "$input" | grep -o '"conversation_id":"[^"]*"' | head -1 | sed 's/"conversation_id":"//;s/"$//')
 
@@ -25,3 +26,4 @@ payload=$(jq -n \
 curl -sf --max-time 5 -X POST http://127.0.0.1:8787/hook/session-start \
   -H 'Content-Type: application/json' \
   -d "$payload" > /dev/null 2>&1 || true
+echo '{}'

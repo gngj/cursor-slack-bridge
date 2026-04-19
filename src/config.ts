@@ -18,6 +18,7 @@ export const config = {
     userId: requireEnv('SLACK_USER_ID'),
   },
   port: parseInt(process.env.PORT ?? '8787', 10),
+  httpHost: process.env.HTTP_HOST ?? '127.0.0.1',
   logLevel: process.env.LOG_LEVEL ?? 'info',
   dbPath: process.env.DB_PATH ?? './data/sessions.db',
   longPollTimeoutMs: parseInt(process.env.LONG_POLL_TIMEOUT_MS ?? '1800000', 10),

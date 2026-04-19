@@ -2,6 +2,9 @@ services:
   slack-bridge:
     build: .
     env_file: .env
+    environment:
+      NODE_ENV: production
+      HTTP_HOST: 0.0.0.0
     ports:
       - "127.0.0.1:8787:8787"
     volumes:

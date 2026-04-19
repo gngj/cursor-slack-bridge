@@ -1,4 +1,5 @@
 #!/bin/bash
+[ "${CURSOR_SLACK_DEBUG:-0}" = "1" ] && echo "$(date '+%Y-%m-%dT%H:%M:%S') agent-thought" >> /tmp/cursor-slack-bridge-hooks.log
 input=$(cat)
 conversation_id=$(echo "$input" | grep -o '"conversation_id":"[^"]*"' | head -1 | sed 's/"conversation_id":"//;s/"$//')
 text=$(echo "$input" | jq -r '.text // empty' 2>/dev/null || echo "")

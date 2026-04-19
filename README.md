@@ -54,9 +54,11 @@ macOS, and connects to Cursor via hook scripts.
 | `SLACK_SIGNING_SECRET` | No | — | Signing secret (not needed for Socket Mode) |
 | `SLACK_USER_ID` | Yes | — | Your Slack member ID (bot DMs this user) |
 | `PORT` | No | `8787` | HTTP server port |
+| `HTTP_HOST` | No | `127.0.0.1` | HTTP server bind address (`0.0.0.0` for Docker) |
 | `LOG_LEVEL` | No | `info` | Pino log level (`debug`, `info`, `warn`, `error`, `fatal`) |
 | `DB_PATH` | No | `./data/sessions.db` | SQLite database file path |
 | `LONG_POLL_TIMEOUT_MS` | No | `1800000` | Control-mode long-poll timeout in ms (default 30 min) |
+| `CURSOR_SLACK_DEBUG` | No | `0` | Set to `1` to log hook invocations to `/tmp/cursor-slack-bridge-hooks.log` |
 
 ## Run Locally
 
@@ -72,34 +74,38 @@ npm run dev
 ```bash
 cp .env.example .env
 # Edit .env with your Slack tokens and user ID
-docker compose up -d
+docker compose up -d --build
 ```
 
-The container binds to `127.0.0.1:8787` and persists the SQLite database in
-`./data/`.
+The compose file sets `NODE_ENV=production` (so the logger skips `pino-pretty`)
+and `HTTP_HOST=0.0.0.0` (so the server is reachable from the host via Docker's
+port mapping). The host-side binding is still restricted to `127.0.0.1:8787`.
+
+The SQLite database is persisted in `./data/` via a bind mount.
 
 ## Cursor Hook Setup
 
-Add to `~/.cursor/hooks.json` (global) or `.cursor/hooks.json` (per-project):
+Add to `~/.cursor/hooks.json` (global) or `.cursor/hooks.json` (per-project).
+Replace `<REPO>` with the absolute path to your clone of this repository:
 
 ```json
 {
   "version": 1,
   "hooks": {
     "sessionStart": [
-      { "command": "~/.cursor/hooks/slack/hooks/session-start.sh" }
+      { "command": "<REPO>/hooks/session-start.sh" }
     ],
     "afterAgentResponse": [
-      { "command": "~/.cursor/hooks/slack/hooks/agent-response.sh" }
+      { "command": "<REPO>/hooks/agent-response.sh" }
     ],
     "afterAgentThought": [
-      { "command": "~/.cursor/hooks/slack/hooks/agent-thought.sh" }
+      { "command": "<REPO>/hooks/agent-thought.sh" }
     ],
     "preToolUse": [
-      { "command": "~/.cursor/hooks/slack/hooks/tool-use.sh", "timeout": 150 }
+      { "command": "<REPO>/hooks/tool-use.sh", "timeout": 150 }
     ],
     "stop": [
-      { "command": "~/.cursor/hooks/slack/hooks/stop.sh", "timeout": 1800 }
+      { "command": "<REPO>/hooks/stop.sh", "timeout": 1800 }
     ]
   }
 }

@@ -16,13 +16,13 @@ export function createHttpServer(
   pendingAnswerStore: PendingReplyStore,
 ): Server {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '5mb' }));
   app.use(healthRoutes());
   app.use(sessionRoutes(sessionStore));
   app.use(hookRoutes(slackApp, sessionStore, pendingReplyStore, pendingAnswerStore));
 
-  const server = app.listen(config.port, '127.0.0.1', () => {
-    logger.info({ port: config.port }, 'HTTP server listening');
+  const server = app.listen(config.port, config.httpHost, () => {
+    logger.info({ host: config.httpHost, port: config.port }, 'HTTP server listening');
   });
 
   return server;
