@@ -1,14 +1,21 @@
 #!/bin/bash
+set -uo pipefail
+
 [ "${CURSOR_SLACK_DEBUG:-0}" = "1" ] && echo "$(date '+%Y-%m-%dT%H:%M:%S') tool-use" >> /tmp/cursor-slack-bridge-hooks.log
+
 input=$(cat)
-conversation_id=$(echo "$input" | grep -o '"conversation_id":"[^"]*"' | head -1 | sed 's/"conversation_id":"//;s/"$//')
+conversation_id=$(echo "$input" | jq -r '.conversation_id // empty' 2>/dev/null || echo "")
 tool_name=$(echo "$input" | jq -r '.tool_name // empty' 2>/dev/null || echo "")
 if [ -z "$tool_name" ]; then
   echo '{"permission":"allow"}'
   exit 0
 fi
 tool_input=$(echo "$input" | jq -c '.tool_input // {}' 2>/dev/null || echo '{}')
-payload=$(jq -n --arg cid "$conversation_id" --arg tn "$tool_name" --argjson ti "$tool_input" '{conversation_id: $cid, tool_name: $tn, tool_input: $ti}')
+payload=$(jq -n \
+  --arg cid "$conversation_id" \
+  --arg tn "$tool_name" \
+  --argjson ti "$tool_input" \
+  '{conversation_id: $cid, tool_name: $tn, tool_input: $ti}')
 
 response=$(curl -sf --max-time 130 -X POST http://127.0.0.1:8787/hook/tool-use \
   -H 'Content-Type: application/json' \

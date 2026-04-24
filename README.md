@@ -58,6 +58,7 @@ macOS, and connects to Cursor via hook scripts.
 | `LOG_LEVEL` | No | `info` | Pino log level (`debug`, `info`, `warn`, `error`, `fatal`) |
 | `DB_PATH` | No | `./data/sessions.db` | SQLite database file path |
 | `LONG_POLL_TIMEOUT_MS` | No | `1800000` | Control-mode long-poll timeout in ms (default 30 min) |
+| `SYNC_AGENT_THOUGHTS` | No | `1` | Set to `0` to skip posting agent "Thinking…" reasoning previews to Slack (keeps threads less noisy) |
 | `CURSOR_SLACK_DEBUG` | No | `0` | Set to `1` to log hook invocations to `/tmp/cursor-slack-bridge-hooks.log` |
 
 ## Run Locally
@@ -162,6 +163,18 @@ long-poll promises for control-mode replies and AskQuestion answers.
 | Silent (default) | button or `silent` | No | No | No | No |
 | Watch | button or `watch` | Yes | Yes | Yes | No |
 | Control | button or `control` | Yes | Yes | Yes | Yes (30 min window) |
+
+## DM Commands
+
+Type these as a plain message to the bot DM (either at the DM root or inside
+any session thread):
+
+| Command | Effect |
+| --- | --- |
+| `watch` | Switch the current thread's session to Watch mode |
+| `control` | Switch the current thread's session to Control mode |
+| `silent` | Switch the current thread's session to Silent mode |
+| `clear` | Delete every message the bot has posted in the DM and wipe session records from the database. Sessions that are currently waiting on a long-poll reply (Control-mode stop prompt or `AskQuestion`) are preserved so the agent isn't stranded. Your own messages cannot be removed by the bot (Slack platform restriction — only the author or a workspace admin can). |
 
 ## HTTP API
 

@@ -26,6 +26,8 @@ export class SessionStore {
         repo_name TEXT,
         branch_name TEXT,
         workspace_path TEXT,
+        worktree_name TEXT,
+        chat_title TEXT,
         created_at TEXT NOT NULL,
         last_message_at TEXT NOT NULL
       )
@@ -42,13 +44,19 @@ export class SessionStore {
     if (!colNames.has('workspace_path')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN workspace_path TEXT');
     }
+    if (!colNames.has('worktree_name')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN worktree_name TEXT');
+    }
+    if (!colNames.has('chat_title')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN chat_title TEXT');
+    }
   }
 
   create(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (conversation_id, thread_ts, channel_id, mode, status, repo_name, branch_name, workspace_path, created_at, last_message_at)
-         VALUES (@conversation_id, @thread_ts, @channel_id, @mode, @status, @repo_name, @branch_name, @workspace_path, @created_at, @last_message_at)`,
+        `INSERT INTO sessions (conversation_id, thread_ts, channel_id, mode, status, repo_name, branch_name, workspace_path, worktree_name, chat_title, created_at, last_message_at)
+         VALUES (@conversation_id, @thread_ts, @channel_id, @mode, @status, @repo_name, @branch_name, @workspace_path, @worktree_name, @chat_title, @created_at, @last_message_at)`,
       )
       .run(session);
   }
@@ -81,10 +89,20 @@ export class SessionStore {
       .run(status, conversationId);
   }
 
+  updateChatTitle(conversationId: string, chatTitle: string | null): void {
+    this.db
+      .prepare('UPDATE sessions SET chat_title = ? WHERE conversation_id = ?')
+      .run(chatTitle, conversationId);
+  }
+
   touchLastMessage(conversationId: string): void {
     this.db
       .prepare('UPDATE sessions SET last_message_at = ? WHERE conversation_id = ?')
       .run(new Date().toISOString(), conversationId);
+  }
+
+  deleteByConversationId(conversationId: string): void {
+    this.db.prepare('DELETE FROM sessions WHERE conversation_id = ?').run(conversationId);
   }
 
   close(): void {

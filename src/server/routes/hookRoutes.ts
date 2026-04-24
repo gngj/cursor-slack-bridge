@@ -5,13 +5,16 @@ import type { PendingReplyStore } from '../../store/pendingReplyStore.js';
 import type {
   AgentResponsePayload,
   AgentThoughtPayload,
+  Session,
   SessionStartPayload,
   StopPayload,
   ToolUsePayload,
 } from '../../types.js';
 import { config } from '../../config.js';
 import { logger } from '../../lib/logger.js';
+import { getChatInfo } from '../../lib/cursorDb.js';
 import {
+  sessionContextFromRow,
   sessionMessageBlocks,
   sessionMessageText,
   agentResponseBlocks,
@@ -33,6 +36,55 @@ function getToolHandler(toolName: string): ToolHandler {
   return SPECIAL_TOOLS[toolName] ?? 'notify';
 }
 
+// Refreshes the session's Slack header with the latest chat title, if any.
+// Design notes:
+//   - Hook scripts may pass `chat_title` in the payload (works from Docker);
+//     when running natively we also fall back to reading the Cursor state DB.
+//   - Null-or-empty lookups never overwrite a previously-known title; we treat
+//     that as a transient miss (DB read race, Cursor still initialising, etc.).
+//     The trade-off is that a deleted/renamed-to-empty Cursor chat stays stale
+//     until a new title is observed. Acceptable for this app's scope.
+//   - Callers should invoke this off the critical path (fire-and-forget) so
+//     Slack round-trips don't delay the agent-response / stop message itself.
+function refreshChatTitle(
+  slackApp: App,
+  sessionStore: SessionStore,
+  session: Session,
+  providedTitle?: string | null,
+): void {
+  const normalizedProvided =
+    typeof providedTitle === 'string' && providedTitle.trim() ? providedTitle.trim() : null;
+
+  // Short-circuit when the payload already matches what we have — no DB read,
+  // no Slack call. The title changes very rarely after the first observation.
+  if (normalizedProvided !== null && normalizedProvided === session.chat_title) return;
+
+  void (async () => {
+    try {
+      const nextTitle =
+        normalizedProvided ?? getChatInfo(session.conversation_id)?.name ?? null;
+
+      if (nextTitle === session.chat_title) return;
+      if (nextTitle === null && session.chat_title !== null) return;
+
+      sessionStore.updateChatTitle(session.conversation_id, nextTitle);
+      const updated: Session = { ...session, chat_title: nextTitle };
+
+      await slackApp.client.chat.update({
+        channel: session.channel_id,
+        ts: session.thread_ts,
+        text: sessionMessageText(sessionContextFromRow(updated), session.mode),
+        blocks: sessionMessageBlocks(sessionContextFromRow(updated), session.mode),
+      });
+    } catch (err) {
+      logger.debug(
+        { err, conversationId: session.conversation_id },
+        'Failed to refresh chat title header',
+      );
+    }
+  })();
+}
+
 export function hookRoutes(
   slackApp: App,
   sessionStore: SessionStore,
@@ -42,7 +94,7 @@ export function hookRoutes(
   const router = Router();
 
   router.post('/hook/session-start', async (req, res) => {
-    const { conversation_id, repo_name, branch_name, workspace_path } =
+    const { conversation_id, repo_name, branch_name, workspace_path, worktree_name } =
       req.body as SessionStartPayload;
     if (!conversation_id) {
       res.status(400).json({ error: 'Missing conversation_id' });
@@ -69,6 +121,8 @@ export function hookRoutes(
         repoName: repo_name,
         branchName: branch_name,
         workspacePath: workspace_path,
+        worktreeName: worktree_name || null,
+        chatTitle: null,
       };
 
       const result = await slackApp.client.chat.postMessage({
@@ -82,15 +136,17 @@ export function hookRoutes(
       }
 
       const now = new Date().toISOString();
-      const session = {
+      const session: Session = {
         conversation_id,
         thread_ts: result.ts,
         channel_id: result.channel,
-        mode: 'silent' as const,
-        status: 'active' as const,
+        mode: 'silent',
+        status: 'active',
         repo_name: repo_name ?? null,
         branch_name: branch_name ?? null,
         workspace_path: workspace_path ?? null,
+        worktree_name: worktree_name || null,
+        chat_title: null,
         created_at: now,
         last_message_at: now,
       };
@@ -105,7 +161,7 @@ export function hookRoutes(
   });
 
   router.post('/hook/agent-response', async (req, res) => {
-    const { conversation_id, text } = req.body as AgentResponsePayload;
+    const { conversation_id, text, chat_title } = req.body as AgentResponsePayload;
     const trimmedText = text?.trim();
     if (!conversation_id || !trimmedText) {
       res.json({});
@@ -131,6 +187,7 @@ export function hookRoutes(
         blocks: agentResponseBlocks(trimmedText),
       });
       sessionStore.touchLastMessage(conversation_id);
+      refreshChatTitle(slackApp, sessionStore, session, chat_title);
       res.json({ posted: true });
     } catch (err) {
       logger.error({ err, conversationId: conversation_id }, 'Failed to post agent response');
@@ -139,6 +196,11 @@ export function hookRoutes(
   });
 
   router.post('/hook/agent-thought', async (req, res) => {
+    if (!config.syncAgentThoughts) {
+      res.json({});
+      return;
+    }
+
     const { conversation_id, text, duration_ms } = req.body as AgentThoughtPayload;
     const trimmedText = text?.trim();
     if (!conversation_id || !trimmedText) {
@@ -219,7 +281,7 @@ export function hookRoutes(
   });
 
   router.post('/hook/stop', async (req, res) => {
-    const { conversation_id, status, loop_count } = req.body as StopPayload;
+    const { conversation_id, status, loop_count, chat_title } = req.body as StopPayload;
     if (!conversation_id) {
       res.status(400).json({ error: 'Missing conversation_id' });
       return;
@@ -239,6 +301,7 @@ export function hookRoutes(
         text: stopText,
         blocks: stopPromptBlocks(status, loop_count),
       });
+      refreshChatTitle(slackApp, sessionStore, session, chat_title);
 
       const reply = await pendingReplyStore.waitForReply(conversation_id, config.longPollTimeoutMs);
 
