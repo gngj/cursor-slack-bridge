@@ -1,5 +1,6 @@
 import { slackifyMarkdown } from 'slackify-markdown';
-import type { SessionMode } from '../types.js';
+import type { KnownBlock } from '@slack/types';
+import type { Session, SessionMode } from '../types.js';
 
 const MODE_LABELS: Record<SessionMode, { text: string; emoji: string; description: string }> = {
   silent: { text: 'Silent', emoji: ':no_bell:', description: 'No output to Slack' },
@@ -31,56 +32,89 @@ export interface SessionContext {
   repoName?: string | null;
   branchName?: string | null;
   workspacePath?: string | null;
+  worktreeName?: string | null;
+  chatTitle?: string | null;
+}
+
+export function sessionContextFromRow(session: Session): SessionContext {
+  return {
+    conversationId: session.conversation_id,
+    repoName: session.repo_name,
+    branchName: session.branch_name,
+    workspacePath: session.workspace_path,
+    worktreeName: session.worktree_name,
+    chatTitle: session.chat_title,
+  };
 }
 
 function sessionTitle(ctx: SessionContext): string {
-  const repo = ctx.repoName || 'unknown';
-  const branch = ctx.branchName;
+  const repo = escapeSlackMrkdwn(ctx.repoName || 'unknown');
+  const worktree = ctx.worktreeName ? escapeSlackMrkdwn(ctx.worktreeName) : null;
+  const branch = ctx.branchName ? escapeSlackMrkdwn(ctx.branchName) : null;
+  const repoPart = worktree ? `${repo}/${worktree}` : repo;
   if (branch) {
-    return `*${repo}*  :seedling:  \`${branch}\``;
+    return `*${repoPart}*  :seedling:  \`${branch}\``;
   }
-  return `*${repo}*`;
+  return `*${repoPart}*`;
 }
 
 function sessionTitlePlain(ctx: SessionContext): string {
   const repo = ctx.repoName || 'unknown';
+  const worktree = ctx.worktreeName;
   const branch = ctx.branchName;
-  if (branch) return `${repo} · ${branch}`;
-  return repo;
+  const repoPart = worktree ? `${repo}/${worktree}` : repo;
+  if (branch) return `${repoPart} · ${branch}`;
+  return repoPart;
 }
 
-export function sessionMessageBlocks(ctx: SessionContext, currentMode: SessionMode) {
+export function sessionMessageBlocks(ctx: SessionContext, currentMode: SessionMode): KnownBlock[] {
   const label = MODE_LABELS[currentMode];
   const title = sessionTitle(ctx);
   const sid = ctx.conversationId.slice(0, 8);
 
-  return [
+  const blocks: KnownBlock[] = [
     {
-      type: 'section' as const,
-      text: {
-        type: 'mrkdwn' as const,
-        text: title,
-      },
+      type: 'section',
+      text: { type: 'mrkdwn', text: title },
     },
+  ];
+
+  if (ctx.chatTitle) {
+    blocks.push({
+      type: 'context',
+      elements: [
+        { type: 'mrkdwn', text: `:speech_balloon: _${escapeSlackMrkdwn(ctx.chatTitle)}_` },
+      ],
+    });
+  }
+
+  blocks.push(
     {
-      type: 'section' as const,
+      type: 'section',
       text: {
-        type: 'mrkdwn' as const,
+        type: 'mrkdwn',
         text: `${label.emoji}  *${label.text}* — ${label.description}`,
       },
     },
     modeButtons(currentMode),
     {
-      type: 'context' as const,
-      elements: [{ type: 'mrkdwn' as const, text: `\`${sid}\`` }],
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `\`${sid}\`` }],
     },
-  ];
+  );
+
+  return blocks;
 }
 
 export function sessionMessageText(ctx: SessionContext, currentMode: SessionMode): string {
   const label = MODE_LABELS[currentMode];
   const title = sessionTitlePlain(ctx);
-  return `${title} · ${label.text} — ${label.description}`;
+  const chatPart = ctx.chatTitle ? ` · ${ctx.chatTitle}` : '';
+  return `${title}${chatPart} · ${label.text} — ${label.description}`;
+}
+
+function escapeSlackMrkdwn(text: string): string {
+  return text.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c] ?? c);
 }
 
 const MAX_SECTION_TEXT = 3000;
@@ -113,32 +147,31 @@ function splitText(text: string, maxLen: number): string[] {
   return chunks;
 }
 
-export function agentResponseBlocks(markdownText: string) {
+export function agentResponseBlocks(markdownText: string): KnownBlock[] {
   const slackText = mdToSlack(markdownText);
   const chunks = splitText(slackText, MAX_SECTION_TEXT);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const blocks: any[] = [
+  const blocks: KnownBlock[] = [
     {
-      type: 'context' as const,
-      elements: [{ type: 'mrkdwn' as const, text: ':robot_face: *Agent*' }],
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: ':robot_face: *Agent*' }],
     },
   ];
 
   for (const chunk of chunks.slice(0, MAX_BLOCKS - 2)) {
     blocks.push({
-      type: 'section' as const,
-      text: { type: 'mrkdwn' as const, text: chunk },
+      type: 'section',
+      text: { type: 'mrkdwn', text: chunk },
     });
   }
 
-  blocks.push({ type: 'divider' as const });
+  blocks.push({ type: 'divider' });
   return blocks;
 }
 
 const THOUGHT_PREVIEW_LEN = 150;
 
-export function agentThoughtBlocks(thinkingText: string, durationMs: number) {
+export function agentThoughtBlocks(thinkingText: string, durationMs: number): KnownBlock[] {
   const firstLine = thinkingText.split('\n').find((l) => l.trim()) || thinkingText;
   const preview =
     firstLine.length > THOUGHT_PREVIEW_LEN
@@ -148,12 +181,9 @@ export function agentThoughtBlocks(thinkingText: string, durationMs: number) {
 
   return [
     {
-      type: 'context' as const,
+      type: 'context',
       elements: [
-        {
-          type: 'mrkdwn' as const,
-          text: `:thought_balloon: _${preview}_ (${seconds}s)`,
-        },
+        { type: 'mrkdwn', text: `:thought_balloon: _${preview}_ (${seconds}s)` },
       ],
     },
   ];
@@ -212,15 +242,18 @@ function toolSummary(toolName: string, toolInput: Record<string, unknown>): stri
   }
 }
 
-export function toolUseBlocks(toolName: string, toolInput: Record<string, unknown>) {
+export function toolUseBlocks(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+): KnownBlock[] {
   const emoji = TOOL_EMOJI[toolName] ?? DEFAULT_TOOL_EMOJI;
   const summary = toolSummary(toolName, toolInput);
   const text = summary ? `${emoji} *${toolName}*  ${summary}` : `${emoji} *${toolName}*`;
 
   return [
     {
-      type: 'context' as const,
-      elements: [{ type: 'mrkdwn' as const, text }],
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text }],
     },
   ];
 }
@@ -235,12 +268,11 @@ function truncateLabel(label: string, max: number): string {
 export function askQuestionBlocks(
   questions: { prompt: string; options: { id?: string; label: string }[] }[],
   conversationId?: string,
-) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const blocks: any[] = [
+): KnownBlock[] {
+  const blocks: KnownBlock[] = [
     {
-      type: 'context' as const,
-      elements: [{ type: 'mrkdwn' as const, text: ':raising_hand: *Agent is asking a question*' }],
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: ':raising_hand: *Agent is asking a question*' }],
     },
   ];
 
@@ -248,8 +280,8 @@ export function askQuestionBlocks(
 
   for (const [qi, q] of questions.entries()) {
     blocks.push({
-      type: 'section' as const,
-      text: { type: 'mrkdwn' as const, text: `*${q.prompt}*` },
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*${q.prompt}*` },
     });
 
     const concreteOptions = q.options.filter((o) => !OTHER_PATTERN.test(o.label.trim()));
@@ -257,11 +289,11 @@ export function askQuestionBlocks(
 
     if (concreteOptions.length > 0) {
       blocks.push({
-        type: 'actions' as const,
+        type: 'actions',
         elements: concreteOptions.map((o, i) => ({
-          type: 'button' as const,
+          type: 'button',
           text: {
-            type: 'plain_text' as const,
+            type: 'plain_text',
             text: `${String.fromCharCode(65 + i)}. ${truncateLabel(o.label, MAX_BUTTON_TEXT)}`,
           },
           action_id: `ask_${cidShort}_q${qi}_opt${i}`,
@@ -277,36 +309,36 @@ export function askQuestionBlocks(
 
     if (hasOther) {
       blocks.push({
-        type: 'context' as const,
+        type: 'context',
         elements: [
-          { type: 'mrkdwn' as const, text: '_:speech_balloon: Other — type your answer in Cursor_' },
+          { type: 'mrkdwn', text: '_:speech_balloon: Other — type your answer in Cursor_' },
         ],
       });
     }
   }
 
-  blocks.push({ type: 'divider' as const });
+  blocks.push({ type: 'divider' });
   return blocks;
 }
 
-export function stopPromptBlocks(status: string, loopCount: number) {
+export function stopPromptBlocks(status: string, loopCount: number): KnownBlock[] {
   return [
-    { type: 'divider' as const },
+    { type: 'divider' },
     {
-      type: 'section' as const,
+      type: 'section',
       text: {
-        type: 'mrkdwn' as const,
+        type: 'mrkdwn',
         text: `:white_square_button: Agent finished — status: *${status}*, loop: *${loopCount}*\n*Reply here to continue the conversation.*`,
       },
     },
   ];
 }
 
-export function systemMessageBlocks(text: string) {
+export function systemMessageBlocks(text: string): KnownBlock[] {
   return [
     {
-      type: 'context' as const,
-      elements: [{ type: 'mrkdwn' as const, text: `:gear: ${text}` }],
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `:gear: ${text}` }],
     },
   ];
 }

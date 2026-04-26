@@ -2,7 +2,7 @@ import type { App } from '@slack/bolt';
 import type { SessionStore } from '../../store/sessionStore.js';
 import type { PendingReplyStore } from '../../store/pendingReplyStore.js';
 import type { SessionMode } from '../../types.js';
-import { sessionMessageBlocks, sessionMessageText, type SessionContext } from '../blocks.js';
+import { sessionContextFromRow, sessionMessageBlocks, sessionMessageText } from '../blocks.js';
 import { logger } from '../../lib/logger.js';
 
 const MODE_ACTIONS: Record<string, SessionMode> = {
@@ -41,12 +41,7 @@ export function registerActionHandlers(
       sessionStore.updateMode(session.conversation_id, mode);
       logger.info({ conversationId: session.conversation_id, mode }, 'Mode changed via button');
 
-      const ctx: SessionContext = {
-        conversationId: session.conversation_id,
-        repoName: session.repo_name,
-        branchName: session.branch_name,
-        workspacePath: session.workspace_path,
-      };
+      const ctx = sessionContextFromRow(session);
       await client.chat.update({
         channel: session.channel_id,
         ts: session.thread_ts,
